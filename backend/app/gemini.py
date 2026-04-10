@@ -18,7 +18,7 @@ ANALYZE_PROMPTS: dict[AnalysisMode, str] = {
     ),
     "critique": (
         "You are an expert art mentor. Provide a concise critique with strengths, one improvement suggestion, "
-        "and one next-step experiment. Keep response <= 120 words."
+        "and one next-step experiment. Keep response <= 60 words."
     ),
     "style": (
         "Identify the most likely art style/movement of this drawing, then justify in 2-3 sentences."
