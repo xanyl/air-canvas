@@ -1,0 +1,24 @@
+{
+  "exportedAt": "2026-04-10T22:14:41.381Z",
+  "analytics": {
+    "totalStrokes": 5,
+    "totalPoints": 1038,
+    "eraserStrokes": 1,
+    "averagePointsPerStroke": 207.6,
+    "brushUsage": {
+      "ink": 1,
+      "neon": 4,
+      "watercolor": 0,
+      "spray": 0,
+      "calligraphy": 0,
+      "glitter": 0,
+      "chalk": 0
+    },
+    "layerUsage": {
+      "background": 0,
+      "canvas": 5,
+      "overlay": 0
+    }
+  },
+  "mathHistory": []
+}
