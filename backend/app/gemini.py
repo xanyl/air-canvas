@@ -48,6 +48,8 @@ class GeminiError(RuntimeError):
 class GeminiResult:
     text: str
     latency_ms: int
+    provider: str = "gemini"
+    model: str = ""
 
 
 @dataclass
@@ -199,7 +201,7 @@ async def _call_gemini(settings: Settings, image_base64: str, prompt: str) -> Ge
         raise GeminiError("Gemini returned invalid JSON payload.") from exc
 
     text = _extract_gemini_text_payload(data)
-    return GeminiResult(text=text, latency_ms=latency_ms)
+    return GeminiResult(text=text, latency_ms=latency_ms, provider="gemini", model=settings.gemini_model)
 
 
 async def _call_openai_math(settings: Settings, image_base64: str, prompt: str) -> tuple[str, int, str]:
@@ -256,6 +258,56 @@ async def _call_openai_math(settings: Settings, image_base64: str, prompt: str) 
     return text, latency_ms, model
 
 
+async def _call_openai_analyze(settings: Settings, image_base64: str, prompt: str) -> GeminiResult:
+    """Call OpenAI vision API for general text analysis (non-JSON)."""
+    if not settings.openai_api_key:
+        raise GeminiError("OpenAI API key is not configured on backend.")
+
+    endpoint = "https://api.openai.com/v1/chat/completions"
+    payload = {
+        "model": settings.openai_model,
+        "temperature": 0.3,
+        "max_tokens": 512,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_base64}"}},
+                ],
+            },
+        ],
+    }
+
+    start = time.perf_counter()
+    timeout = httpx.Timeout(30.0, connect=10.0)
+    headers = {
+        "Authorization": f"Bearer {settings.openai_api_key}",
+        "Content-Type": "application/json",
+    }
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.post(endpoint, headers=headers, json=payload)
+    latency_ms = int((time.perf_counter() - start) * 1000)
+
+    if response.status_code >= 400:
+        detail = response.text
+        try:
+            data = response.json()
+            detail = data.get("error", {}).get("message", detail)
+        except Exception:
+            pass
+        raise GeminiError(f"OpenAI API error ({response.status_code}): {detail}")
+
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise GeminiError("OpenAI returned invalid JSON payload.") from exc
+
+    text = _extract_openai_text_payload(data)
+    model = str(data.get("model", settings.openai_model))
+    return GeminiResult(text=text, latency_ms=latency_ms, provider="openai", model=model)
+
+
 async def analyze_image(
     settings: Settings,
     image_base64: str,
@@ -265,7 +317,26 @@ async def analyze_image(
     prompt = ANALYZE_PROMPTS[mode]
     if prompt_context:
         prompt = f"{prompt}\n\nAdditional context: {prompt_context.strip()}"
-    return await _call_gemini(settings, image_base64, prompt)
+
+    errors: list[str] = []
+
+    # Try OpenAI first
+    if settings.openai_api_key:
+        try:
+            return await _call_openai_analyze(settings, image_base64, prompt)
+        except GeminiError as exc:
+            errors.append(f"OpenAI: {exc}")
+
+    # Fall back to Gemini
+    if settings.gemini_api_key:
+        try:
+            return await _call_gemini(settings, image_base64, prompt)
+        except GeminiError as exc:
+            errors.append(f"Gemini fallback: {exc}")
+
+    if errors:
+        raise GeminiError(" ; ".join(errors))
+    raise GeminiError("Neither OPENAI_API_KEY nor GEMINI_API_KEY is configured on backend.")
 
 
 async def solve_math_with_openai(settings: Settings, image_base64: str) -> MathResult:

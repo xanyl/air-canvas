@@ -6,6 +6,9 @@ type ShortcutHandlers = {
   onClear: () => void;
   onSaveSession: () => void;
   onToggleMode: () => void;
+  onPrevPage: () => void;
+  onNextPage: () => void;
+  onAddPage: () => void;
 };
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -42,6 +45,13 @@ export function useKeyboardShortcuts(handlers: ShortcutHandlers): void {
         handlers.onClear();
       } else if (key === 'm') {
         handlers.onToggleMode();
+      } else if (key === '[' || key === 'pageup') {
+        handlers.onPrevPage();
+      } else if (key === ']' || key === 'pagedown') {
+        handlers.onNextPage();
+      } else if (key === 'n' && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        handlers.onAddPage();
       }
     };
 

@@ -7,6 +7,8 @@ import {
   INDEX_TIP,
   THUMB_TIP,
   WRIST,
+  classifySecondHand,
+  dist,
   type GestureType,
   type Point,
 } from './cv/gesture';
@@ -24,6 +26,11 @@ import {
   undo,
   addPoint,
   startStroke,
+  addPage,
+  goToPage,
+  deletePage,
+  getPageCount,
+  migrateState,
   type BrushEngineState,
 } from './draw/brushEngine';
 import { generateReplayFrames } from './draw/replay';
@@ -32,6 +39,7 @@ import { OneEuroFilter } from './draw/smoothing';
 import { drawTemplate } from './draw/templates';
 import { useFPS } from './hooks/useFPS';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { useOCR } from './hooks/useOCR';
 import { useOpenCV } from './hooks/useOpenCV';
 import { useToast } from './hooks/useToast';
 import { cannyEdges } from './opencv/edgeDetect';
@@ -45,6 +53,8 @@ import { Controls, type ControlsState } from './ui/Controls';
 import { ModeBar } from './ui/ModeBar';
 
 import './styles.css';
+
+type ViewTransform = { scale: number; offsetX: number; offsetY: number };
 
 const MODEL_URL =
   'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task';
@@ -77,6 +87,15 @@ export default function App() {
   const [replayFrames, setReplayFrames] = useState<string[]>([]);
   const [replayIndex, setReplayIndex] = useState(0);
   const [replayPlaying, setReplayPlaying] = useState(false);
+
+  // OCR state
+  const [ocrText, setOcrText] = useState<string | null>(null);
+
+  // Multi-hand zoom/pan state
+  const [viewTransform, setViewTransform] = useState<ViewTransform>({ scale: 1, offsetX: 0, offsetY: 0 });
+  const viewTransformRef = useRef<ViewTransform>({ scale: 1, offsetX: 0, offsetY: 0 });
+  const secondHandPrevRef = useRef<{ pinchDist: number; midX: number; midY: number } | null>(null);
+  const secondHandActiveRef = useRef(false);
 
   const [controls, setControls] = useState<ControlsState>({
     brushColor: '#00e5ff',
@@ -130,6 +149,7 @@ export default function App() {
   const { fps, tick: fpsTick } = useFPS();
   const { toasts, show: showToast } = useToast();
   const { status: cvStatus, load: loadCV } = useOpenCV();
+  const { recognize: ocrRecognize, status: ocrStatus } = useOCR();
 
   useEffect(() => {
     controlsRef.current = controls;
@@ -291,7 +311,7 @@ export default function App() {
     }
 
     setShowAiModal(true);
-    setAiModalTitle('Gemini Art Analysis');
+    setAiModalTitle('AI Art Analysis');
     setAiLoading(true);
     setAiError(null);
     setAiResult(null);
@@ -331,14 +351,13 @@ export default function App() {
       const result = await solveMathImage(base64FromCanvas(img));
       setMathHistory((prev) => [result, ...prev].slice(0, 30));
       setLatestMathResult(result);
-      const providerLabel = result.provider === 'openai' ? 'OpenAI' : 'Gemini fallback';
       setAiResult(
-        `${result.expression}\n= ${result.answer}\nConfidence: ${Math.round(result.confidence * 100)}%\nProvider: ${providerLabel}\nLatency: ${result.latencyMs}ms`,
+        `${result.expression}\n= ${result.answer}\nConfidence: ${Math.round(result.confidence * 100)}%\nProvider: AI\nLatency: ${result.latencyMs}ms`,
       );
       setShowMathResultPop(true);
       if (mathResultTimerRef.current) window.clearTimeout(mathResultTimerRef.current);
       mathResultTimerRef.current = window.setTimeout(() => setShowMathResultPop(false), MATH_RESULT_POP_MS);
-      setStatus(`Solved (${providerLabel}): ${result.answer}`);
+      setStatus(`Solved: ${result.answer}`);
       setStatusType('active');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Math solve failed';
@@ -460,7 +479,8 @@ export default function App() {
   const loadSavedSession = useCallback((id: string) => {
     const session = sessions.find((s) => s.id === id);
     if (!session) return;
-    brushRef.current = JSON.parse(JSON.stringify(session.brushState)) as BrushEngineState;
+    const raw = JSON.parse(JSON.stringify(session.brushState)) as BrushEngineState;
+    brushRef.current = migrateState(raw);
     setMathHistory(session.mathHistory || []);
     setLatestMathResult(session.mathHistory?.[0] ?? null);
     setControls((prev) => ({
@@ -508,6 +528,65 @@ export default function App() {
     URL.revokeObjectURL(url);
   }, [mathHistory]);
 
+  const handleOCR = useCallback(async () => {
+    const draw = drawRef.current;
+    if (!draw) return;
+    const total = countStrokes(brushRef.current);
+    if (total === 0) {
+      showToast('Draw or write something first');
+      return;
+    }
+    try {
+      const img = exportToCanvas(brushRef.current, draw.width, draw.height);
+      const result = await ocrRecognize(img);
+      setOcrText(result.text || '(no text detected)');
+      showToast(`OCR done — ${Math.round(result.confidence)}% confidence`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'OCR failed';
+      setOcrText(null);
+      showToast(message);
+    }
+  }, [ocrRecognize, showToast]);
+
+  const resetView = useCallback(() => {
+    const reset = { scale: 1, offsetX: 0, offsetY: 0 };
+    viewTransformRef.current = reset;
+    secondHandPrevRef.current = null;
+    setViewTransform(reset);
+  }, []);
+
+  const handlePrevPage = useCallback(() => {
+    const s = brushRef.current;
+    if (s.currentPage > 0) {
+      brushRef.current = goToPage(s, s.currentPage - 1);
+      setDrawVersion((v) => v + 1);
+      showToast(`Page ${s.currentPage}`);
+    }
+  }, [showToast]);
+
+  const handleNextPage = useCallback(() => {
+    const s = brushRef.current;
+    if (s.currentPage < s.pages.length - 1) {
+      brushRef.current = goToPage(s, s.currentPage + 1);
+      setDrawVersion((v) => v + 1);
+      showToast(`Page ${s.currentPage + 2}`);
+    }
+  }, [showToast]);
+
+  const handleAddPage = useCallback(() => {
+    brushRef.current = addPage(brushRef.current);
+    setDrawVersion((v) => v + 1);
+    showToast(`Added page ${brushRef.current.pages.length}`);
+  }, [showToast]);
+
+  const handleDeletePage = useCallback(() => {
+    const s = brushRef.current;
+    if (s.pages.length <= 1) return;
+    brushRef.current = deletePage(s, s.currentPage);
+    setDrawVersion((v) => v + 1);
+    showToast(`Deleted page, now on page ${brushRef.current.currentPage + 1}`);
+  }, [showToast]);
+
   useKeyboardShortcuts({
     onUndo: doUndo,
     onRedo: doRedo,
@@ -518,6 +597,9 @@ export default function App() {
     },
     onSaveSession: () => saveCurrentSession('Shortcut Session', ''),
     onToggleMode: () => setMode((m) => (m === 'draw' ? 'math' : 'draw')),
+    onPrevPage: handlePrevPage,
+    onNextPage: handleNextPage,
+    onAddPage: handleAddPage,
   });
 
   useEffect(() => {
@@ -551,7 +633,43 @@ export default function App() {
     if (video.currentTime !== lastVideoTimeRef.current) {
       lastVideoTimeRef.current = video.currentTime;
       const result = lm.detectForVideo(video, performance.now());
-      const first = (result.landmarks?.[0] ?? []) as Array<{ x: number; y: number; z?: number }>;
+      const allHands = result.landmarks ?? [];
+      const first = (allHands[0] ?? []) as Array<{ x: number; y: number; z?: number }>;
+      const second = (allHands[1] ?? []) as Array<{ x: number; y: number; z?: number }>;
+
+      // ── Second hand: viewport zoom/pan ──
+      if (second.length > INDEX_TIP) {
+        const mirrored = s.mirror ? second.map((p) => ({ x: 1 - p.x, y: p.y, z: p.z })) : second;
+        const { gesture: secGesture } = classifySecondHand(mirrored);
+        if (secGesture === 'PINCH') {
+          const thumb = mirrored[THUMB_TIP];
+          const index = mirrored[INDEX_TIP];
+          const pd = dist(thumb, index);
+          const mx = (thumb.x + index.x) / 2;
+          const my = (thumb.y + index.y) / 2;
+          if (secondHandPrevRef.current) {
+            const prev = secondHandPrevRef.current;
+            const dScale = pd / Math.max(prev.pinchDist, 0.001);
+            const dX = (mx - prev.midX) * 400;
+            const dY = (my - prev.midY) * 400;
+            const vt = viewTransformRef.current;
+            const newScale = Math.max(0.5, Math.min(4, vt.scale * dScale));
+            const newOffsetX = Math.max(-500, Math.min(500, vt.offsetX + dX));
+            const newOffsetY = Math.max(-500, Math.min(500, vt.offsetY + dY));
+            const updated = { scale: newScale, offsetX: newOffsetX, offsetY: newOffsetY };
+            viewTransformRef.current = updated;
+            setViewTransform(updated);
+          }
+          secondHandPrevRef.current = { pinchDist: pd, midX: mx, midY: my };
+          secondHandActiveRef.current = true;
+        } else {
+          secondHandPrevRef.current = null;
+          secondHandActiveRef.current = false;
+        }
+      } else {
+        secondHandPrevRef.current = null;
+        secondHandActiveRef.current = false;
+      }
 
       if (s.showDebug && first.length > INDEX_TIP) {
         const lms = s.mirror ? first.map((p) => ({ x: 1 - p.x, y: p.y })) : first.map((p) => ({ x: p.x, y: p.y }));
@@ -666,7 +784,7 @@ export default function App() {
             triggerHoldStartRef.current = null;
             void handleAiAnalyze('describe');
           }
-          setStatus(`Hold 3 fingers for Gemini analysis… ${Math.min(100, Math.round((held / ROCK_ANALYZE_HOLD_MS) * 100))}%`);
+          setStatus(`Hold 3 fingers for AI analysis… ${Math.min(100, Math.round((held / ROCK_ANALYZE_HOLD_MS) * 100))}%`);
           setStatusType('idle');
         } else if (resolvedGesture === 'FIST') {
           endDrawOrErase();
@@ -771,6 +889,12 @@ export default function App() {
           statusType={statusType}
           cvStatus={cvStatus}
           onLoadCV={() => void loadCV()}
+          zoomLevel={viewTransform.scale}
+          onResetView={resetView}
+          currentPage={brushRef.current.currentPage}
+          totalPages={getPageCount(brushRef.current)}
+          onPrevPage={handlePrevPage}
+          onNextPage={handleNextPage}
         />
       </div>
 
@@ -791,6 +915,10 @@ export default function App() {
           replayFrames={replayFrames}
           replayIndex={replayIndex}
           replayPlaying={replayPlaying}
+          ocrStatus={ocrStatus}
+          ocrText={ocrText}
+          currentPage={brushRef.current.currentPage}
+          totalPages={getPageCount(brushRef.current)}
           onUndo={doUndo}
           onRedo={doRedo}
           onClear={() => {
@@ -806,6 +934,9 @@ export default function App() {
           }}
           onAiAnalyze={(analysisMode) => void handleAiAnalyze(analysisMode)}
           onMathSolve={() => void handleMathSolve()}
+          onOCR={() => void handleOCR()}
+          onAddPage={handleAddPage}
+          onDeletePage={handleDeletePage}
           onSaveSession={saveCurrentSession}
           onLoadSession={loadSavedSession}
           onDeleteSession={deleteSavedSession}
@@ -816,13 +947,21 @@ export default function App() {
         />
       </div>
 
-      <div className="stage-wrapper canvas-stage">
-        <video ref={videoRef} playsInline muted style={videoStyle} className="canvas-video" />
-        <canvas ref={templateRef} className="canvas-overlay" style={{ zIndex: 1.5, pointerEvents: 'none' }} />
-        <canvas ref={drawRef} className="canvas-overlay" style={{ zIndex: 2 }} />
-        <canvas ref={debugRef} className="canvas-overlay" style={{ zIndex: 3, display: controls.showDebug ? 'block' : 'none', mixBlendMode: 'screen' }} />
-        <canvas ref={cvMaskRef} className="cv-overlay-canvas" style={{ zIndex: 4, display: controls.showCVMask ? 'block' : 'none' }} />
-        <canvas ref={cvEdgeRef} className="cv-overlay-canvas" style={{ zIndex: 5, display: controls.showCVEdges ? 'block' : 'none' }} />
+      <div className="stage-wrapper canvas-stage" style={{ overflow: 'hidden' }}>
+        <div style={{
+          transform: `translate(${viewTransform.offsetX}px, ${viewTransform.offsetY}px) scale(${viewTransform.scale})`,
+          transformOrigin: 'center center',
+          position: 'absolute',
+          inset: 0,
+          transition: secondHandActiveRef.current ? 'none' : 'transform 200ms ease-out',
+        }}>
+          <video ref={videoRef} playsInline muted style={videoStyle} className="canvas-video" />
+          <canvas ref={templateRef} className="canvas-overlay" style={{ zIndex: 1.5, pointerEvents: 'none' }} />
+          <canvas ref={drawRef} className="canvas-overlay" style={{ zIndex: 2 }} />
+          <canvas ref={debugRef} className="canvas-overlay" style={{ zIndex: 3, display: controls.showDebug ? 'block' : 'none', mixBlendMode: 'screen' }} />
+          <canvas ref={cvMaskRef} className="cv-overlay-canvas" style={{ zIndex: 4, display: controls.showCVMask ? 'block' : 'none' }} />
+          <canvas ref={cvEdgeRef} className="cv-overlay-canvas" style={{ zIndex: 5, display: controls.showCVEdges ? 'block' : 'none' }} />
+        </div>
 
         {!cameraOn && (
           <div className="canvas-start-prompt" style={{ zIndex: 10 }}>
@@ -850,9 +989,7 @@ export default function App() {
           <div className={`math-result-pop ${showMathResultPop ? 'show' : ''}`} style={{ zIndex: 12 }}>
             <div className="math-result-header">
               <span>Math Solved</span>
-              <span className={`math-provider-chip ${latestMathResult.provider}`}>
-                {latestMathResult.provider === 'openai' ? 'OpenAI' : 'Gemini Fallback'}
-              </span>
+              <span className="math-provider-chip openai">AI</span>
             </div>
             <div className="math-result-expression">{latestMathResult.expression}</div>
             <div className="math-result-answer">= {latestMathResult.answer}</div>
@@ -869,6 +1006,12 @@ export default function App() {
             alt="Replay frame"
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: 6, pointerEvents: 'none', opacity: replayPlaying ? 0.9 : 0.65 }}
           />
+        )}
+
+        {viewTransform.scale !== 1 && (
+          <div className="zoom-info">
+            🔍 {Math.round(viewTransform.scale * 100)}%
+          </div>
         )}
 
         {cameraOn && (

@@ -21,7 +21,7 @@ function emptyStateFrom(state: BrushEngineState): BrushEngineState {
       active: undefined,
     };
   });
-  return { layers, activeLayer: state.activeLayer };
+  return { pages: [layers], currentPage: 0, layers, activeLayer: state.activeLayer };
 }
 
 function orderedStrokes(state: BrushEngineState): Array<{ layer: LayerId; stroke: Stroke }> {

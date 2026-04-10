@@ -10,6 +10,12 @@ type Props = {
   statusType: 'idle' | 'active' | 'error';
   cvStatus: CVStatus;
   onLoadCV: () => void;
+  zoomLevel: number;
+  onResetView: () => void;
+  currentPage: number;
+  totalPages: number;
+  onPrevPage: () => void;
+  onNextPage: () => void;
 };
 
 export function ModeBar({
@@ -21,7 +27,15 @@ export function ModeBar({
   statusType,
   cvStatus,
   onLoadCV,
+  zoomLevel,
+  onResetView,
+  currentPage,
+  totalPages,
+  onPrevPage,
+  onNextPage,
 }: Props) {
+  const zoomPct = Math.round(zoomLevel * 100);
+
   return (
     <div className="mode-bar">
       <div className="mode-bar-brand">
@@ -40,6 +54,13 @@ export function ModeBar({
       </div>
 
       <div className="mode-divider" />
+      <div className="page-nav">
+        <button className="page-nav-btn" onClick={onPrevPage} disabled={currentPage === 0}>◀</button>
+        <span className="page-nav-label">{currentPage + 1} / {totalPages}</span>
+        <button className="page-nav-btn" onClick={onNextPage} disabled={currentPage >= totalPages - 1}>▶</button>
+      </div>
+
+      <div className="mode-divider" />
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <span style={{ fontSize: 10, color: 'var(--text-3)', fontFamily: 'var(--ff-mono)' }}>OpenCV</span>
         {cvStatus === 'ready' && <span className="cv-chip ready">● Ready</span>}
@@ -51,6 +72,18 @@ export function ModeBar({
           </button>
         )}
       </div>
+
+      {zoomPct !== 100 && (
+        <>
+          <div className="mode-divider" />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span className="zoom-indicator">{zoomPct}%</span>
+            <button className="btn btn-sm" onClick={onResetView} style={{ fontSize: 9, padding: '3px 8px' }}>
+              Reset
+            </button>
+          </div>
+        </>
+      )}
 
       <div className="mode-bar-spacer" />
       <div className="mode-bar-status">

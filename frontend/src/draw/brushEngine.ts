@@ -43,8 +43,12 @@ export type LayerState = {
   opacity: number;
 };
 
+export type PageLayers = Record<LayerId, LayerState>;
+
 export type BrushEngineState = {
-  layers: Record<LayerId, LayerState>;
+  pages: PageLayers[];
+  currentPage: number;
+  layers: PageLayers; // always === pages[currentPage], kept for backward compatibility
   activeLayer: LayerId;
 };
 
@@ -56,13 +60,30 @@ function makeLayer(): LayerState {
   return { strokes: [], redo: [], active: undefined, visible: true, opacity: 1 };
 }
 
+function makePage(): PageLayers {
+  return { background: makeLayer(), canvas: makeLayer(), overlay: makeLayer() };
+}
+
 export function createInitialState(): BrushEngineState {
-  return { layers: { background: makeLayer(), canvas: makeLayer(), overlay: makeLayer() }, activeLayer: 'canvas' };
+  const page = makePage();
+  return { pages: [page], currentPage: 0, layers: page, activeLayer: 'canvas' };
+}
+
+/**
+ * Migrate legacy state (pre-pages) to the new format.
+ * Old sessions stored `layers` without `pages`/`currentPage`.
+ */
+export function migrateState(s: BrushEngineState): BrushEngineState {
+  if (s.pages && s.pages.length > 0) return s;
+  return { ...s, pages: [s.layers], currentPage: 0 };
 }
 
 function applyToActive(s: BrushEngineState, fn: (l: LayerState) => LayerState): BrushEngineState {
   const id = s.activeLayer;
-  return { ...s, layers: { ...s.layers, [id]: fn(s.layers[id]) } };
+  const newLayers: PageLayers = { ...s.layers, [id]: fn(s.layers[id]) };
+  const newPages = [...s.pages];
+  newPages[s.currentPage] = newLayers;
+  return { ...s, pages: newPages, layers: newLayers };
 }
 
 export function setActiveLayer(s: BrushEngineState, id: LayerId): BrushEngineState {
@@ -70,17 +91,20 @@ export function setActiveLayer(s: BrushEngineState, id: LayerId): BrushEngineSta
 }
 
 export function toggleLayerVisibility(s: BrushEngineState, id: LayerId): BrushEngineState {
-  return { ...s, layers: { ...s.layers, [id]: { ...s.layers[id], visible: !s.layers[id].visible } } };
+  const newLayers: PageLayers = { ...s.layers, [id]: { ...s.layers[id], visible: !s.layers[id].visible } };
+  const newPages = [...s.pages];
+  newPages[s.currentPage] = newLayers;
+  return { ...s, pages: newPages, layers: newLayers };
 }
 
 export function setLayerOpacity(s: BrushEngineState, id: LayerId, opacity: number): BrushEngineState {
-  return {
-    ...s,
-    layers: {
-      ...s.layers,
-      [id]: { ...s.layers[id], opacity: Math.max(0, Math.min(1, opacity)) },
-    },
+  const newLayers: PageLayers = {
+    ...s.layers,
+    [id]: { ...s.layers[id], opacity: Math.max(0, Math.min(1, opacity)) },
   };
+  const newPages = [...s.pages];
+  newPages[s.currentPage] = newLayers;
+  return { ...s, pages: newPages, layers: newLayers };
 }
 
 export function startStroke(
@@ -168,9 +192,11 @@ export function clearAll(s: BrushEngineState): BrushEngineState {
       acc[id] = { ...s.layers[id], strokes: [], redo: [], active: undefined };
       return acc;
     },
-    {} as Record<LayerId, LayerState>,
+    {} as PageLayers,
   );
-  return { ...s, layers: cleared };
+  const newPages = [...s.pages];
+  newPages[s.currentPage] = cleared;
+  return { ...s, pages: newPages, layers: cleared };
 }
 
 export function getAllStrokes(state: BrushEngineState): Stroke[] {
@@ -179,4 +205,29 @@ export function getAllStrokes(state: BrushEngineState): Stroke[] {
 
 export function countStrokes(state: BrushEngineState): number {
   return getAllStrokes(state).length;
+}
+
+// ── Multi-page navigation ──────────────────────────────────────────
+
+export function getPageCount(state: BrushEngineState): number {
+  return state.pages.length;
+}
+
+export function addPage(s: BrushEngineState): BrushEngineState {
+  const page = makePage();
+  const newPages = [...s.pages, page];
+  const newIndex = newPages.length - 1;
+  return { ...s, pages: newPages, currentPage: newIndex, layers: page };
+}
+
+export function goToPage(s: BrushEngineState, index: number): BrushEngineState {
+  if (index < 0 || index >= s.pages.length || index === s.currentPage) return s;
+  return { ...s, currentPage: index, layers: s.pages[index] };
+}
+
+export function deletePage(s: BrushEngineState, index: number): BrushEngineState {
+  if (s.pages.length <= 1) return s; // must keep at least one page
+  const newPages = s.pages.filter((_, i) => i !== index);
+  const newIndex = Math.min(s.currentPage, newPages.length - 1);
+  return { ...s, pages: newPages, currentPage: newIndex, layers: newPages[newIndex] };
 }

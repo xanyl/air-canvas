@@ -48,7 +48,8 @@ async def ai_analyze(req: AnalyzeRequest) -> AnalyzeResponse:
     return AnalyzeResponse(
         text=result.text,
         mode=req.mode,
-        model=settings.gemini_model,
+        provider=result.provider,
+        model=result.model or settings.gemini_model,
         latencyMs=result.latency_ms,
     )
 

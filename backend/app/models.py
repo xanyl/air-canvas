@@ -17,6 +17,7 @@ class AnalyzeRequest(BaseModel):
 class AnalyzeResponse(BaseModel):
     text: str
     mode: AnalysisMode
+    provider: Literal["openai", "gemini"]
     model: str
     latencyMs: int
 

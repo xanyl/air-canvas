@@ -67,6 +67,30 @@ export function classifyGesture(lm: Point[]): { gesture: GestureType; confidence
 }
 
 /**
+ * Simplified gesture classifier for the second (viewport-control) hand.
+ * Only detects PINCH and OPEN — no drawing/erasing gestures.
+ */
+export function classifySecondHand(lm: Point[]): { gesture: 'PINCH' | 'OPEN' | 'NONE'; confidence: number } {
+  if (!lm || lm.length < 21) return { gesture: 'NONE', confidence: 0 };
+
+  const handSize = dist(lm[WRIST], lm[INDEX_MCP]);
+  const pinchDist = dist(lm[THUMB_TIP], lm[INDEX_TIP]) / Math.max(handSize, 0.01);
+
+  if (pinchDist < 0.38) {
+    return { gesture: 'PINCH', confidence: 1 - pinchDist / 0.38 };
+  }
+
+  const indexUp = fingerUp(lm[INDEX_TIP], lm[INDEX_PIP]);
+  const midUp = fingerUp(lm[MIDDLE_TIP], lm[MIDDLE_PIP]);
+  const ringUp = fingerUp(lm[RING_TIP], lm[RING_PIP]);
+  const pinkyUp = fingerUp(lm[PINKY_TIP], lm[PINKY_PIP]);
+  const count = [indexUp, midUp, ringUp, pinkyUp].filter(Boolean).length;
+
+  if (count >= 3) return { gesture: 'OPEN', confidence: 0.9 };
+  return { gesture: 'NONE', confidence: 0.5 };
+}
+
+/**
  * GestureProcessor: requires N consecutive identical frames before committing.
  * Eliminates flickering at gesture boundaries.
  */
@@ -101,5 +125,5 @@ export const GESTURE_META: Record<GestureType, { emoji: string; label: string; a
   VICTORY: { emoji: '✌️', label: '2 Fingers',  action2D: 'Erase (2 fingers)',            action3D: 'Rotate grabbed object',color: '#f59e0b' },
   OPEN:    { emoji: '🖐️', label: 'Open Palm',  action2D: 'Neutral',                            action3D: 'Neutral',              color: '#8b5cf6' },
   FIST:    { emoji: '✊', label: 'Fist',       action2D: 'Hold in Math mode to solve',         action3D: 'Release / Deselect',   color: '#ef4444' },
-  ROCK:    { emoji: '🤘', label: '3 Fingers',  action2D: 'Hold ~1s for Gemini analysis',       action3D: 'Special action',        color: '#ec4899' },
+  ROCK:    { emoji: '🤘', label: '3 Fingers',  action2D: 'Hold ~1s for AI analysis',            action3D: 'Special action',        color: '#ec4899' },
 };

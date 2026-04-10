@@ -264,11 +264,24 @@ function createScratchCanvas(w: number, h: number): HTMLCanvasElement | Offscree
   return canvas;
 }
 
-function renderLayer(composite: CanvasRenderingContext2D, layer: LayerState, w: number, h: number): void {
+// ── Layer rendering cache: reuse OffscreenCanvas per layer ID ──
+const _layerBuffers = new Map<string, HTMLCanvasElement | OffscreenCanvas>();
+
+function getLayerBuffer(key: string, w: number, h: number): HTMLCanvasElement | OffscreenCanvas {
+  let buf = _layerBuffers.get(key);
+  if (!buf || buf.width !== w || buf.height !== h) {
+    buf = createScratchCanvas(w, h);
+    _layerBuffers.set(key, buf);
+  }
+  return buf;
+}
+
+function renderLayer(composite: CanvasRenderingContext2D, layer: LayerState, w: number, h: number, layerKey: string): void {
   if (!layer.visible) return;
-  const off = createScratchCanvas(w, h);
+  const off = getLayerBuffer(layerKey, w, h);
   const ctx = off.getContext('2d') as CanvasRenderingContext2D | null;
   if (!ctx) return;
+  ctx.clearRect(0, 0, w, h);
 
   for (const stroke of layer.strokes) drawStroke(ctx, stroke, w, h);
   if (layer.active) drawStroke(ctx, layer.active, w, h);
@@ -283,7 +296,7 @@ export function renderDrawing(ctx: CanvasRenderingContext2D, state: BrushEngineS
   const { canvas } = ctx;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   for (const id of ['background', 'canvas', 'overlay'] as const) {
-    renderLayer(ctx, state.layers[id], canvas.width, canvas.height);
+    renderLayer(ctx, state.layers[id], canvas.width, canvas.height, id);
   }
 }
 

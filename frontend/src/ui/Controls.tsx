@@ -3,6 +3,7 @@ import { ANALYSIS_MODES } from '../ai/apiClient';
 import { GESTURE_META, type GestureType } from '../cv/gesture';
 import { BRUSH_META, BRUSH_TYPES, LAYERS, type BrushType, type LayerId, type SymmetryMode } from '../draw/brushEngine';
 import { TEMPLATE_PRESETS, type TemplatePreset } from '../draw/templates';
+import type { OcrStatus } from '../hooks/useOCR';
 import type { SessionAnalytics } from '../session/analytics';
 import type { SessionRecord } from '../session/storage';
 import type { AnalysisMode, AppMode, MathSolveResult } from '../types';
@@ -86,6 +87,10 @@ export function Controls(props: {
   replayFrames: string[];
   replayIndex: number;
   replayPlaying: boolean;
+  ocrStatus: OcrStatus;
+  ocrText: string | null;
+  currentPage: number;
+  totalPages: number;
   onUndo: () => void;
   onRedo: () => void;
   onClear: () => void;
@@ -93,6 +98,9 @@ export function Controls(props: {
   onToggleLayer: (id: LayerId) => void;
   onAiAnalyze: (mode: AnalysisMode) => void;
   onMathSolve: () => void;
+  onOCR: () => void;
+  onAddPage: () => void;
+  onDeletePage: () => void;
   onSaveSession: (name: string, notes: string) => void;
   onLoadSession: (id: string) => void;
   onDeleteSession: (id: string) => void;
@@ -192,6 +200,29 @@ export function Controls(props: {
         </div>
 
         <div>
+          <div className="section-label">Pages</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 12, fontFamily: 'var(--ff-mono)', color: 'var(--text-2)', flex: 1 }}>
+              Page {props.currentPage + 1} of {props.totalPages}
+            </span>
+            <button className="btn btn-sm btn-primary" onClick={props.onAddPage} style={{ fontSize: 10, padding: '4px 10px' }}>
+              + Add
+            </button>
+            <button
+              className="btn btn-sm btn-danger"
+              onClick={props.onDeletePage}
+              disabled={props.totalPages <= 1}
+              style={{ fontSize: 10, padding: '4px 10px', opacity: props.totalPages <= 1 ? 0.4 : 1 }}
+            >
+              🗑
+            </button>
+          </div>
+          <div style={{ marginTop: 6, fontSize: 9, color: 'var(--text-3)', fontFamily: 'var(--ff-mono)' }}>
+            [ / ] to navigate · Cmd+N to add
+          </div>
+        </div>
+
+        <div>
           <div className="section-label">Creative Tools</div>
           <div className="shape-grid">
             {(['off', 'horizontal', 'vertical', 'quad'] as SymmetryMode[]).map((mode) => (
@@ -228,7 +259,7 @@ export function Controls(props: {
             <button className="btn" onClick={props.onRedo}>↪ Redo</button>
             <button className="btn btn-danger" onClick={props.onClear}>🗑 Clear</button>
             <button className="btn btn-primary" onClick={props.mode === 'math' ? props.onMathSolve : () => setShowAI((v) => !v)}>
-              {props.mode === 'math' ? '🧮 Solve (Fist)' : '✨ Gemini Analyze'}
+              {props.mode === 'math' ? '🧮 Solve (Fist)' : '✨ AI Analyze'}
             </button>
           </div>
 
@@ -241,6 +272,37 @@ export function Controls(props: {
               ))}
             </div>
           )}
+
+          <div style={{ marginTop: 8 }}>
+            <button
+              className="btn"
+              style={{ width: '100%' }}
+              onClick={props.onOCR}
+              disabled={props.ocrStatus === 'recognizing'}
+            >
+              {props.ocrStatus === 'recognizing' ? '⏳ Recognizing…' : '📝 OCR — Read Text'}
+            </button>
+            {props.ocrText != null && (
+              <div className="ocr-result" style={{ marginTop: 8 }}>
+                <div className="ocr-result-header">
+                  <span>Recognized Text</span>
+                  <button
+                    className="btn btn-sm"
+                    onClick={() => { void navigator.clipboard.writeText(props.ocrText ?? ''); }}
+                    style={{ fontSize: 9, padding: '3px 8px' }}
+                  >
+                    📋 Copy
+                  </button>
+                </div>
+                <textarea
+                  className="modal-input ocr-textarea"
+                  readOnly
+                  value={props.ocrText}
+                  rows={Math.min(6, Math.max(2, (props.ocrText ?? '').split('\n').length))}
+                />
+              </div>
+            )}
+          </div>
 
           <div className="export-dropdown" style={{ marginTop: 8 }}>
             <button className="btn btn-export" style={{ width: '100%' }} onClick={() => setShowExport((v) => !v)}>
@@ -307,7 +369,7 @@ export function Controls(props: {
                   <div className="object-info">
                     <div className="object-name">{entry.expression}</div>
                     <div className="object-pos">
-                      = {entry.answer} · {Math.round(entry.confidence * 100)}% · {entry.provider === 'openai' ? 'OpenAI' : 'Gemini'}
+                      = {entry.answer} · {Math.round(entry.confidence * 100)}% · AI
                     </div>
                   </div>
                 </div>
