@@ -1,6 +1,6 @@
-# AirCanvas Final Project (2D Only)
+# AirCanvas Final Project
 
-Master's-level Computer Vision project: real-time air-writing and drawing with hand gestures using **MediaPipe + OpenCV + OpenAI + Gemini + FastAPI + React**.
+Computer Vision project: real-time air-writing and drawing with hand gestures using **MediaPipe + OpenCV + OpenAI + Gemini + FastAPI + React**.
 
 ## Features
 
