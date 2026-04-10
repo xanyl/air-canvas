@@ -1,0 +1,19 @@
+{
+  "name": "aircanvas-final-project",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "setup": "npm --prefix frontend install && npm run setup:backend",
+    "setup:backend": "cd backend && python3 -m pip install -r requirements.txt",
+    "dev": "concurrently -n FRONTEND,BACKEND -c cyan,green \"npm run dev:frontend\" \"npm run dev:backend\"",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "dev:backend": "cd backend && python3 -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000",
+    "build": "npm --prefix frontend run build",
+    "test": "npm --prefix frontend run test && cd backend && python3 -m pytest",
+    "test:frontend": "npm --prefix frontend run test",
+    "test:backend": "cd backend && python3 -m pytest"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
