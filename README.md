@@ -164,7 +164,7 @@ Response:
 }
 ```
 
-## Demo Flow (for Viva/Presentation)
+## Demo Flow 
 
 1. Start camera and show gesture HUD.
 2. Draw in `Draw` mode with 2-3 brushes.
